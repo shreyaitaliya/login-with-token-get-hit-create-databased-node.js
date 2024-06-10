@@ -1,58 +1,93 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const { createDatabase, createSequelizeInstance } = require('../config/db');
+const { createSequelizeInstance, createSequelizeInstanceWithoutDb, createDatabase, syncMasterTable, createHostModel, addNewUserToMasterTable } = require('../config/db');
 const userModelDef = require('../models/usermodel');
 const categoryModelDef = require('../models/categorymodel');
 const subcategoryModelDef = require('../models/subcategorymodel');
+const masterTableDef = require('../models/masterconfigdatabase');
 
-const adduser = async (req, res) => {
+const master_host = async (req, res) => {
     try {
-        const { dbName, name, email, password } = req.body;
-        if (!dbName || !name || !email || !password) {
-            return res.status(400).send({ success: false, message: 'Database name, name, email, and password are required' });
+        const { dbuser, dbName, name, email, password } = req.body; // Get dbuser and dbName from request body
+
+        if (!dbuser || !dbName || !name || !email || !password) {
+            return res.status(400).send({ success: false, message: 'Database user and name are required' });
         }
+        console.log(req.body);
+        // Create Sequelize instance without specifying a database
+        const sequelizeWithoutDb = createSequelizeInstanceWithoutDb(dbuser);
 
-        // Create database if it does not exist
-        await createDatabase(dbName);
+        // // Create the master database if it doesn't exist
+        await createDatabase(sequelizeWithoutDb, 'master');
 
-        // Initialize Sequelize with the database name
-        const sequelize = createSequelizeInstance(dbName);
+        // // Create Sequelize instance for the master database
+        const masterSequelize = createSequelizeInstance('master', dbuser);
 
-        // Define models
+        // // Synchronize the MasterTable
+        const MasterTable = masterTableDef(masterSequelize);
+        await syncMasterTable(masterSequelize);
+
+        // const existingUser = await MasterTable.findOne({ where: { dbuser } });
+        // console.log(existingUser);
+
+        // if (existingUser) {
+        //     // If user exists, update the dbName associated with the user
+        //     await existingUser.update({ dbName });
+        // } else {
+        //     // If user doesn't exist, create a new entry
+        //     await addNewUserToMasterTable(masterSequelize, dbuser, dbName); // Pass dbuser here
+        // }
+
+        // // Add new database user entry to MasterTable
+        await addNewUserToMasterTable(masterSequelize, dbuser, dbName);
+        console.log(addNewUserToMasterTable);
+
+        // // Create a database for the new host
+        await createDatabase(masterSequelize, dbName);
+        console.log(createDatabase);
+
+        // // Initialize Sequelize with the correct database username, password, and database name
+        const sequelize = createSequelizeInstance(dbName, dbuser, '');
+
+        // // Define models
         const User = userModelDef(sequelize);
         const Category = categoryModelDef(sequelize);
         const Subcategory = subcategoryModelDef(sequelize);
 
-        // Sync models (create tables)
+        // // Sync models (create tables)
         await sequelize.sync();
 
-        // Hash the user's password
-        const hashedPassword = await bcrypt.hash(password, 10);
+        const adduser = await User.create({
+            name,
+            email,
+            password: await bcrypt.hash(password, 10) // Hash the password before storing it
+        });
 
-        // Create the user
-        const newUser = await User.create({ name, email, password: hashedPassword });
-
-        res.status(200).send({ success: true, message: 'User created successfully', user: newUser });
+        return res.status(200).send({ success: true, message: 'Master host added successfully', adduser });
     } catch (error) {
         console.error(error);
-        res.status(500).send({ success: false, message: 'An error occurred', error: error.message });
+        return res.status(500).send({ success: false, message: 'An error occurred', error: error.message });
     }
 };
 
-const login = async (req, res) => {
+const login = async (req, res) => {  
     try {
-        const { email, password, dbName } = req.body;
-        if (!email || !password || !dbName) {
-            return res.status(400).send({ success: false, message: 'Email, password, and database name are required for login' });
+        const { email, password, dbName, dbuser } = req.body; // Add dbuser here
+        if (!email || !password || !dbName || !dbuser) { // Check for dbuser
+            return res.status(400).send({ success: false, message: 'Email, password, database name, and database user are required for login' });
         }
 
-        const sequelize = createSequelizeInstance(dbName);
+        // Assuming you have a Sequelize instance and User model defined
+        const sequelize = createSequelizeInstance(dbName, dbuser); // Pass dbName and dbuser
         const User = userModelDef(sequelize);
+
+        // Find user by email
         const loginUser = await User.findOne({ where: { email } });
         if (!loginUser) {
             return res.status(400).send({ success: false, message: 'Email and password are incorrect' });
         }
 
+        // Check if passwords match
         const passwordMatch = await bcrypt.compare(password, loginUser.password);
         if (!passwordMatch) {
             return res.status(400).send({ success: false, message: 'Email and password are incorrect' });
@@ -62,11 +97,12 @@ const login = async (req, res) => {
         const tokenPayload = {
             id: loginUser.id,
             email: loginUser.email,
-            dbName
+            dbName,
+            dbuser // Add dbuser to token payload
         };
 
         // Sign the token with the payload
-        let token = jwt.sign({ loginUser: tokenPayload }, 'API', { expiresIn: '1hr' });
+        const token = jwt.sign(tokenPayload, 'your_secret_key', { expiresIn: '1hr' }); // Adjust the secret key and expiration time
 
         return res.status(200).send({ success: true, message: 'Token generated successfully', token });
 
@@ -75,6 +111,7 @@ const login = async (req, res) => {
         return res.status(500).send({ success: false, message: 'An error occurred', error: error.message });
     }
 };
+
 
 
 
@@ -190,4 +227,4 @@ const userdetails = async (req, res) => {
 
 
 
-module.exports = { adduser, login, categoryadd, userdetails, subcategoryadd };
+module.exports = { login, categoryadd, userdetails, subcategoryadd, master_host };

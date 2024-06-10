@@ -1,83 +1,67 @@
-const Sequelize = require('sequelize');
+const { Sequelize } = require('sequelize');
+const dbmatsermodel = require('../models/masterconfigdatabase'); // Import the MasterTable model
+const masterTableDef = require('../models/masterconfigdatabase');
 
-const dbConfig = {
-    HOST: process.env.DB_HOST || "localhost",
-    USER: process.env.DB_USER || "root",
-    PASSWORD: process.env.DB_PASSWORD || "",
-    dialect: "mysql",
-    pool: {
-        max: 5,
-        min: 0,
-        acquire: 30000,
-        idle: 10000
-    }
-};
-
-const createSequelizeInstance = (dbName) => {
-    if (!dbName) {
-        throw new Error('Database name is required');
-    }
-
-    console.log('Connecting to database:', dbName);
+// Function to create a Sequelize instance without specifying a database
+const createSequelizeInstanceWithoutDb = (dbuser, dbpassword = '', dbhost = 'localhost') => {
     return new Sequelize({
-        host: dbConfig.HOST,
-        dialect: dbConfig.dialect,
-        username: dbConfig.USER,
-        password: dbConfig.PASSWORD,
-        database: dbName,
-        logging: false, 
+        username: dbuser,
+        password: dbpassword,
+        host: dbhost,
+        dialect: 'mysql',
+        logging: false,
     });
 };
 
-const createDatabase = async (dbName) => {
-    const tempSequelize = createSequelizeInstance('mysql');
+// Function to create a Sequelize instance for the host database
+const createHostModel = (dbuser) => {
+    return createSequelizeInstanceWithoutDb(dbuser);
+};
+
+// Function to create the Sequelize instance for the main database
+const createSequelizeInstance = (dbName, dbuser, dbpassword = '', dbhost = 'localhost') => {
+    if (!dbName || !dbuser) {
+        throw new Error('Database name and username are required');
+    }
+    console.log(`Connecting to database: ${dbName}`);
+    return new Sequelize(dbName, dbuser, dbpassword, {
+        host: dbhost,
+        dialect: 'mysql',
+        logging: false,
+    });
+};
+
+// Function to create the database if it doesn't exist
+const createDatabase = async (sequelize, dbName) => {
     try {
-        await tempSequelize.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\`;`);
-        console.log(`Database ${dbName} created successfully.`);
+        await sequelize.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\`;`);
+        console.log(`Database "${dbName}" created successfully or already exists.`);
     } catch (error) {
-        console.error('Error creating database:', error);
-        throw error;
-    } finally {
-        await tempSequelize.close();
+        throw new Error(`Error creating database "${dbName}": ${error.message}`);
     }
 };
 
-const createTablesFromConfig = async (dbName, ...tables) => {
-    const sequelize = createSequelizeInstance(dbName);
-    console.log('Tables:', tables);
-
+// Function to synchronize the master table
+const syncMasterTable = async (sequelize) => {
     try {
-        await sequelize.authenticate();
-        console.log('Connection to the database has been established successfully.');
-
-        for (const table of tables) {
-            if (!table.tableName || !table.columns || !Array.isArray(table.columns)) {
-                throw new Error('Table object must contain tableName and columns properties, where columns must be an array');
-            }
-            const { tableName, columns } = table;
-            const tableColumns = {};
-
-            for (const column of Object.values(columns)) {
-                tableColumns[column.name] = {
-                    type: Sequelize[column.type.toUpperCase()],
-                    allowNull: column.allowNull || false
-                };
-            }
-
-            sequelize.define(tableName, tableColumns);
-            console.log(`Table ${tableName} created successfully.`);
-        }
+        const MasterTable = dbmatsermodel(sequelize); // Define MasterTable here
+        await MasterTable.sync();
+        console.log('Master table synchronized successfully.');
     } catch (error) {
-        console.error('Error creating tables:', error);
-        throw error;
-    } finally {
-        await sequelize.close();
+        throw new Error(`Error synchronizing master table: ${error.message}`);
     }
 };
 
+const addNewUserToMasterTable = async (sequelize, dbuser, dbName) => {
+    const MasterTable = masterTableDef(sequelize);
+    await sequelize.sync(); // Ensure the model is synchronized with the database
 
-module.exports = {
-    createDatabase,
-    createTablesFromConfig,
-    createSequelizeInstance
+    // Create the new database
+    await createDatabase(sequelize, dbName);
+
+    // Add the new user entry to MasterTable
+    await MasterTable.create({ host: 'localhost', dbuser, dbpassword: '', dbName });
 };
+
+
+module.exports = { createSequelizeInstance, createHostModel, createDatabase, syncMasterTable, createSequelizeInstanceWithoutDb, addNewUserToMasterTable };

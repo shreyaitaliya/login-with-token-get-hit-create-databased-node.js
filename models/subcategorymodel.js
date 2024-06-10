@@ -1,16 +1,21 @@
-const { DataTypes } = require("sequelize");
+const { DataTypes } = require('sequelize');
 
-module.exports = (sequelize) => {
-    const Subcategory = sequelize.define('Subcategory', {
+const subcategoryModelDef = (sequelize) => {
+    return sequelize.define('Subcategory', {
+        id: {
+            type: DataTypes.INTEGER,
+            autoIncrement: true,
+            primaryKey: true,
+        },
         subcategoryname: {
             type: DataTypes.STRING,
-            allowNull: false
+            allowNull: false,
         },
         userid: {
             type: DataTypes.INTEGER,
-            allowNull: false
-        }
+            allowNull: false,
+        },
     });
-
-    return Subcategory;
 };
+
+module.exports = subcategoryModelDef;
